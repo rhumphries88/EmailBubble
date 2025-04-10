@@ -138,7 +138,7 @@ function App() {
 
     setIsRephrasing(true);
     try {
-      const response = await fetch('https://primary-production-166e.up.railway.app/webhook/a7be01bc-3899-462c-8e10-55198519f88b', {
+      const response = await fetch('/api/webhook/a7be01bc-3899-462c-8e10-55198519f88b', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
