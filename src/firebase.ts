@@ -12,8 +12,10 @@ import {
   serverTimestamp, 
   Timestamp,
   startAfter,
-  where
+  where,
+  updateDoc
 } from 'firebase/firestore';
+import { getDatabase, ref, onValue, onDisconnect, set, increment } from 'firebase/database';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -28,6 +30,41 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+
+// Initialize Realtime Database
+const rtdb = getDatabase(app);
+
+// Active users tracking
+export const trackUserPresence = () => {
+  // Create a unique ID for this session
+  const sessionId = Math.random().toString(36).substring(2, 15);
+  const activeUsersRef = ref(rtdb, 'activeUsers');
+  const userRef = ref(rtdb, `activeUsers/${sessionId}`);
+  
+  // When this client connects, add them to the active users list
+  set(userRef, {
+    timestamp: Date.now()
+  });
+  
+  // When this client disconnects, remove them from the active users list
+  onDisconnect(userRef).remove();
+  
+  // Cleanup function to remove the user when the component unmounts
+  return () => {
+    set(userRef, null);
+  };
+};
+
+// Get active users count
+export const getActiveUsersCount = (callback: (count: number) => void) => {
+  const activeUsersRef = ref(rtdb, 'activeUsers');
+  
+  // Listen for changes to the active users list
+  return onValue(activeUsersRef, (snapshot) => {
+    const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
+    callback(count);
+  });
+};
 
 const MESSAGES_PER_PAGE = 12;
 
@@ -119,8 +156,8 @@ export const getEmailMessages = async (lastDoc?: EmailMessage) => {
 export const updateEmailLikes = async (id: string, likes: number) => {
   try {
     const emailRef = doc(db, 'emails', id);
-    await addDoc(collection(emailRef, 'likes'), {
-      timestamp: serverTimestamp()
+    await updateDoc(emailRef, {
+      likes: likes
     });
     return likes;
   } catch (error) {

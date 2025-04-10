@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { MessageCircle, Send, Heart, Trash2, Mail, Wand2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { MessageCircle, Send, Heart, Trash2, Mail, Wand2, Users } from 'lucide-react';
 import { 
   saveEmailMessage, 
   getEmailMessages, 
   updateEmailLikes, 
   deleteEmailMessage,
-  EmailMessage as FirebaseEmailMessage
+  EmailMessage as FirebaseEmailMessage,
+  trackUserPresence,
+  getActiveUsersCount
 } from './firebase';
 
 interface Message {
@@ -40,10 +42,28 @@ function App() {
   const [isRephrasing, setIsRephrasing] = useState(false);
   const [notification, setNotification] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [activeUsers, setActiveUsers] = useState(1);
+  const [showRephraseTooltip, setShowRephraseTooltip] = useState(false);
+  const rephraseTooltipTimeout = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch initial messages
   useEffect(() => {
     fetchMessages();
+  }, []);
+
+  // Track user presence
+  useEffect(() => {
+    const cleanup = trackUserPresence();
+    
+    // Listen for active users count changes
+    const unsubscribe = getActiveUsersCount((count) => {
+      setActiveUsers(count);
+    });
+    
+    return () => {
+      cleanup();
+      unsubscribe();
+    };
   }, []);
 
   const fetchMessages = async (isLoadingMore = false) => {
@@ -239,6 +259,29 @@ function App() {
     return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
   });
 
+  // Show rephrase tooltip when body field is focused
+  const handleBodyFocus = () => {
+    // Only show the tooltip if there's no existing timeout
+    if (!rephraseTooltipTimeout.current) {
+      setShowRephraseTooltip(true);
+      
+      // Hide the tooltip after 5 seconds
+      rephraseTooltipTimeout.current = setTimeout(() => {
+        setShowRephraseTooltip(false);
+        rephraseTooltipTimeout.current = null;
+      }, 5000);
+    }
+  };
+
+  // Clear the tooltip timeout when component unmounts
+  useEffect(() => {
+    return () => {
+      if (rephraseTooltipTimeout.current) {
+        clearTimeout(rephraseTooltipTimeout.current);
+      }
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col md:flex-row relative">
       {notification && (
@@ -247,13 +290,19 @@ function App() {
         </div>
       )}
 
+      {/* Active Users Indicator */}
+      <div className="fixed bottom-4 right-4 bg-white px-4 py-2 rounded-full shadow-md z-50 flex items-center space-x-2">
+        <Users size={18} className="text-indigo-600" />
+        <span className="font-medium text-indigo-600">{activeUsers}</span>
+      </div>
+
       {/* Sidebar Form */}
       <div className="w-full md:w-1/3 bg-white p-6 shadow-lg">
         <form onSubmit={handleSubmit} className="space-y-4">
           <h2 className="text-2xl font-bold text-gray-800 mb-6">Share Your Thoughts</h2>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700">Name *</label>
+            <label className="block text-sm font-medium text-gray-700">Your Name *</label>
             <input
               type="text"
               value={formData.name}
@@ -264,7 +313,7 @@ function App() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Company *</label>
+            <label className="block text-sm font-medium text-gray-700">Your Company *</label>
             <input
               type="text"
               value={formData.company}
@@ -275,7 +324,7 @@ function App() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Email *</label>
+            <label className="block text-sm font-medium text-gray-700">Your Email *</label>
             <input
               type="email"
               value={formData.email}
@@ -292,6 +341,7 @@ function App() {
               <textarea
                 value={formData.body}
                 onChange={(e) => setFormData({...formData, body: e.target.value})}
+                onFocus={handleBodyFocus}
                 className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
                 rows={4}
                 placeholder="Share your thoughts..."
@@ -305,6 +355,14 @@ function App() {
               >
                 <Wand2 size={20} />
               </button>
+              
+              {/* Rephrase Tooltip */}
+              {showRephraseTooltip && (
+                <div className="absolute -top-16 right-0 bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-lg z-10 w-64 animate-bounce-slow">
+                  <div className="absolute -bottom-2 right-4 w-0 h-0 border-l-8 border-t-8 border-r-8 border-l-transparent border-t-indigo-600 border-r-transparent"></div>
+                  <p className="text-sm font-medium">Click the wand icon to magically rephrase your message with AI! ✨</p>
+                </div>
+              )}
             </div>
           </div>
 

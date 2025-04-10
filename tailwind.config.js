@@ -7,7 +7,8 @@ export default {
         'float': 'float 6s ease-in-out infinite',
         'pulse-slow': 'pulse 4s ease-in-out infinite',
         'fade-in': 'fade-in 0.3s ease-out forwards',
-        'shine': 'shine 3s infinite'
+        'shine': 'shine 3s infinite',
+        'bounce-slow': 'bounce 2s ease-in-out infinite'
       },
       keyframes: {
         float: {
