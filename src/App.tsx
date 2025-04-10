@@ -53,11 +53,11 @@ function App() {
   useEffect(() => {
     fetchMessages();
 
-    // Set up automatic syncing every 30 seconds
+    // Set up automatic syncing every 360 seconds
     syncIntervalRef.current = setInterval(() => {
       setSilentSync(true); // Don't show loading indicator for automatic syncs
       fetchMessages();
-    }, 30000);
+    }, 360000);
 
     // Clean up interval on unmount
     return () => {
