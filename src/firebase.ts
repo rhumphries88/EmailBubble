@@ -13,9 +13,10 @@ import {
   Timestamp,
   startAfter,
   where,
-  updateDoc
+  updateDoc,
+  setDoc,
+  onSnapshot
 } from 'firebase/firestore';
-import { getDatabase, ref, onValue, onDisconnect, set, increment } from 'firebase/database';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -31,38 +32,72 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Initialize Realtime Database
-const rtdb = getDatabase(app);
-
 // Active users tracking
-export const trackUserPresence = () => {
-  // Create a unique ID for this session
-  const sessionId = Math.random().toString(36).substring(2, 15);
-  const activeUsersRef = ref(rtdb, 'activeUsers');
-  const userRef = ref(rtdb, `activeUsers/${sessionId}`);
+export const trackUserPresence = async () => {
+  // Generate a more unique identifier based on device characteristics
+  const generateDeviceId = async () => {
+    const nav = window.navigator;
+    const screen = window.screen;
+    
+    // Collect device information
+    const deviceInfo = [
+      nav.userAgent,
+      screen.colorDepth,
+      screen.width + 'x' + screen.height,
+      new Date().getTimezoneOffset(),
+      nav.language || '',
+      nav.platform,
+      // Add more device characteristics as needed
+    ].join('|');
+    
+    // Create a hash of the device info
+    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(deviceInfo));
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    return hashHex.slice(0, 16); // Return first 16 chars of hash for brevity
+  };
+
+  // Get device ID
+  const deviceId = await generateDeviceId();
+  const activeUsersCollection = collection(db, 'activeUsers');
+  const userDocRef = doc(activeUsersCollection, deviceId);
   
   // When this client connects, add them to the active users list
-  set(userRef, {
-    timestamp: Date.now()
+  await setDoc(userDocRef, {
+    timestamp: serverTimestamp(),
+    lastActive: serverTimestamp()
   });
   
-  // When this client disconnects, remove them from the active users list
-  onDisconnect(userRef).remove();
+  // Update last active timestamp every minute
+  const intervalId = setInterval(async () => {
+    await updateDoc(userDocRef, {
+      lastActive: serverTimestamp()
+    });
+  }, 60000);
   
   // Cleanup function to remove the user when the component unmounts
   return () => {
-    set(userRef, null);
+    clearInterval(intervalId);
+    deleteDoc(userDocRef);
   };
 };
 
-// Get active users count
+// Get active users count - only count users active in the last 5 minutes
 export const getActiveUsersCount = (callback: (count: number) => void) => {
-  const activeUsersRef = ref(rtdb, 'activeUsers');
+  const activeUsersCollection = collection(db, 'activeUsers');
+  const fiveMinutesAgo = new Date();
+  fiveMinutesAgo.setMinutes(fiveMinutesAgo.getMinutes() - 5);
   
-  // Listen for changes to the active users list
-  return onValue(activeUsersRef, (snapshot) => {
-    const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
-    callback(count);
+  // Query for users active in the last 5 minutes
+  const activeUsersQuery = query(
+    activeUsersCollection,
+    where('lastActive', '>', fiveMinutesAgo)
+  );
+  
+  // Listen for changes to the active users collection
+  return onSnapshot(activeUsersQuery, (snapshot) => {
+    callback(snapshot.size);
   });
 };
 

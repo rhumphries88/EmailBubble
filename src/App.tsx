@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageCircle, Send, Heart, Trash2, Mail, Wand2, Users } from 'lucide-react';
+import { MessageCircle, Send, Heart, Trash2, Mail, Wand2, Users, Copy, Check } from 'lucide-react';
 import { 
   saveEmailMessage, 
   getEmailMessages, 
@@ -44,16 +44,39 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeUsers, setActiveUsers] = useState(1);
   const [showRephraseTooltip, setShowRephraseTooltip] = useState(false);
+  const [lastMessageSync, setLastMessageSync] = useState<Date>(new Date());
+  const [silentSync, setSilentSync] = useState(false);
   const rephraseTooltipTimeout = useRef<NodeJS.Timeout | null>(null);
+  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch initial messages
   useEffect(() => {
     fetchMessages();
+
+    // Set up automatic syncing every 30 seconds
+    syncIntervalRef.current = setInterval(() => {
+      setSilentSync(true); // Don't show loading indicator for automatic syncs
+      fetchMessages();
+    }, 30000);
+
+    // Clean up interval on unmount
+    return () => {
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+      }
+    };
   }, []);
 
   // Track user presence
   useEffect(() => {
-    const cleanup = trackUserPresence();
+    let cleanup: (() => void) | null = null;
+    
+    // Initialize user tracking
+    const initUserTracking = async () => {
+      cleanup = await trackUserPresence();
+    };
+    
+    initUserTracking();
     
     // Listen for active users count changes
     const unsubscribe = getActiveUsersCount((count) => {
@@ -61,25 +84,28 @@ function App() {
     });
     
     return () => {
-      cleanup();
+      if (cleanup) cleanup();
       unsubscribe();
     };
   }, []);
 
   const fetchMessages = async (isLoadingMore = false) => {
     try {
-      if (isLoadingMore) {
-        setIsLoadingMore(true);
-      } else {
-        setIsLoading(true);
+      if (!silentSync) {
+        if (isLoadingMore) {
+          setIsLoadingMore(true);
+        } else {
+          setIsLoading(true);
+        }
       }
 
-      const lastMessage = isLoadingMore && messages.length > 0 
-        ? messages[messages.length - 1] 
+      const lastDoc = isLoadingMore && messages.length > 0 
+        ? messages[messages.length - 1] as unknown as FirebaseEmailMessage
         : undefined;
-
-      const { messages: newMessages, hasMore: more } = await getEmailMessages(lastMessage as FirebaseEmailMessage);
       
+      const { messages: newMessages, hasMore: more } = await getEmailMessages(lastDoc);
+      
+      // Convert Firestore timestamps to ISO strings for consistent handling
       const formattedMessages = newMessages.map(msg => ({
         id: msg.id || '',
         name: msg.name,
@@ -90,22 +116,43 @@ function App() {
         color: msg.color,
         timestamp: msg.timestamp instanceof Date 
           ? msg.timestamp.toISOString() 
-          : new Date(msg.timestamp.seconds * 1000).toISOString()
+          : new Date((msg.timestamp as any).seconds * 1000).toISOString()
       }));
-
+      
       if (isLoadingMore) {
-        setMessages(prev => [...prev, ...formattedMessages]);
+        setMessages([...messages, ...formattedMessages]);
       } else {
+        // Check if we have new messages compared to our current state
+        if (messages.length > 0 && formattedMessages.length > 0) {
+          const latestCurrentTimestamp = new Date(messages[0].timestamp).getTime();
+          const latestNewTimestamp = new Date(formattedMessages[0].timestamp).getTime();
+          
+          if (latestNewTimestamp > latestCurrentTimestamp) {
+            // We have new messages, show notification
+            const newMessageCount = formattedMessages.filter(msg => 
+              new Date(msg.timestamp).getTime() > latestCurrentTimestamp
+            ).length;
+            
+            if (newMessageCount > 0 && !silentSync) {
+              showNotification(`${newMessageCount} new message${newMessageCount > 1 ? 's' : ''} received! 📬`);
+            }
+          }
+        }
+        
         setMessages(formattedMessages);
       }
       
       setHasMore(more);
+      setLastMessageSync(new Date());
     } catch (error) {
       console.error('Error fetching messages:', error);
-      showNotification('Failed to load messages! ⚠️');
+      if (!silentSync) {
+        showNotification('Failed to load messages! ⚠️');
+      }
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
+      setSilentSync(false);
     }
   };
 
@@ -259,6 +306,15 @@ function App() {
     return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
   });
 
+  const handleCopyText = (id: string | number, text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      showNotification('Message copied to clipboard! 📋');
+    }).catch(err => {
+      console.error('Failed to copy text: ', err);
+      showNotification('Failed to copy message! ⚠️');
+    });
+  };
+
   // Show rephrase tooltip when body field is focused
   const handleBodyFocus = () => {
     // Only show the tooltip if there's no existing timeout
@@ -404,7 +460,25 @@ function App() {
       <div className="w-full md:w-2/3 p-8 overflow-auto">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-bold text-gray-800">Messages ({messages.length})</h2>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <span className="text-xs text-gray-500">
+              Last updated: {lastMessageSync.toLocaleTimeString()}
+            </span>
+            <button
+              onClick={() => {
+                setSilentSync(false);
+                fetchMessages();
+              }}
+              className="p-2 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600"
+              title="Refresh messages"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 2v6h-6"></path>
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                <path d="M3 22v-6h6"></path>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+            </button>
             <button
               onClick={() => setSortBy('latest')}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200
@@ -472,13 +546,22 @@ function App() {
                         {formatMessage(message.body)}
                       </p>
                       <div className="mt-4 flex items-center justify-between">
-                        <button
-                          onClick={() => handleLike(message.id)}
-                          className="flex items-center space-x-2 bg-white/20 px-3 py-1 rounded-full text-white font-medium hover:bg-white/30 transition-colors duration-200"
-                        >
-                          <Heart className="w-4 h-4" />
-                          <span>{message.likes}</span>
-                        </button>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => handleLike(message.id)}
+                            className="flex items-center space-x-2 bg-white/20 px-3 py-1 rounded-full text-white font-medium hover:bg-white/30 transition-colors duration-200"
+                          >
+                            <Heart className="w-4 h-4" />
+                            <span>{message.likes}</span>
+                          </button>
+                          <button
+                            onClick={() => handleCopyText(message.id, message.body)}
+                            className="flex items-center space-x-2 bg-white/20 px-3 py-1 rounded-full text-white font-medium hover:bg-white/30 transition-colors duration-200"
+                            title="Copy message"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                        </div>
                         <span className="text-sm text-white/80">
                           {new Date(message.timestamp).toLocaleDateString()}
                         </span>
